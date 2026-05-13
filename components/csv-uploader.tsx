@@ -6,6 +6,7 @@ import {
   downloadCSV,
   convertToUTF8,
   extractProductNames,
+  extractStatuses,
   processCSVWithProductFilter,
 } from "@/utils/csv";
 
@@ -20,6 +21,8 @@ export default function CsvUploader() {
   const [csvData, setCsvData] = useState<CsvRow[]>([]);
   const [productNames, setProductNames] = useState<string[]>([]);
   const [selectedProduct, setSelectedProduct] = useState<string>("");
+  const [statuses, setStatuses] = useState<string[]>([]);
+  const [selectedStatus, setSelectedStatus] = useState<string>("all");
 
   const handleFileUpload = useCallback(
     (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -41,6 +44,8 @@ export default function CsvUploader() {
       setCsvData([]);
       setProductNames([]);
       setSelectedProduct("");
+      setStatuses([]);
+      setSelectedStatus("all");
     },
     []
   );
@@ -84,11 +89,15 @@ export default function CsvUploader() {
               return;
             }
 
+            // ステータス一覧を取得
+            const statusList = extractStatuses(results.data);
+
             setCsvData(results.data);
             setProductNames(products);
+            setStatuses(statusList);
             setStatus("ready");
             setMessage(
-              `${results.data.length}件のデータを読み込みました。商品名を選択してください。`
+              `${results.data.length}件のデータを読み込みました。商品名とステータスを選択してください。`
             );
           } catch (error) {
             setStatus("error");
@@ -114,7 +123,7 @@ export default function CsvUploader() {
     }
   }, []);
 
-  // Step 2: 選択された商品名でフィルタリングしてダウンロード
+  // Step 2: 選択された商品名とステータスでフィルタリングしてダウンロード
   const handleDownload = useCallback(() => {
     if (!selectedProduct) {
       setStatus("error");
@@ -128,19 +137,24 @@ export default function CsvUploader() {
 
       const processedData = processCSVWithProductFilter(
         csvData,
-        selectedProduct
+        selectedProduct,
+        selectedStatus
       );
 
       if (processedData.length === 0) {
+        const statusText =
+          selectedStatus === "all" ? "" : `（${selectedStatus}）`;
         setStatus("error");
         setMessage(
-          `「${selectedProduct}」のデータが見つかりませんでした`
+          `「${selectedProduct}」${statusText}のデータが見つかりませんでした`
         );
         return;
       }
 
       const csv = Papa.unparse(processedData);
-      const filename = `${selectedProduct}_${new Date().toISOString().split("T")[0]}.csv`;
+      const statusSuffix =
+        selectedStatus === "all" ? "" : `_${selectedStatus}`;
+      const filename = `${selectedProduct}${statusSuffix}_${new Date().toISOString().split("T")[0]}.csv`;
       downloadCSV(csv, filename);
 
       setStatus("success");
@@ -155,7 +169,7 @@ export default function CsvUploader() {
         }`
       );
     }
-  }, [csvData, selectedProduct]);
+  }, [csvData, selectedProduct, selectedStatus]);
 
   return (
     <div className="space-y-6">
@@ -194,30 +208,67 @@ export default function CsvUploader() {
 
       {/* Step 3: 商品名選択 */}
       {status === "ready" && productNames.length > 0 && (
-        <div>
-          <label
-            htmlFor="product-select"
-            className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2"
-          >
-            商品名を選択
-          </label>
-          <select
-            id="product-select"
-            value={selectedProduct}
-            onChange={(e) => setSelectedProduct(e.target.value)}
-            className="block w-full px-4 py-3 text-gray-900 dark:text-gray-100 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-          >
-            <option value="">-- 商品名を選択してください --</option>
-            {productNames.map((product) => (
-              <option key={product} value={product}>
-                {product}
-              </option>
-            ))}
-          </select>
-          <p className="mt-2 text-sm text-gray-600 dark:text-gray-400">
-            {productNames.length}種類の商品が見つかりました
-          </p>
-        </div>
+        <>
+          <div>
+            <label
+              htmlFor="product-select"
+              className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2"
+            >
+              商品名を選択
+            </label>
+            <select
+              id="product-select"
+              value={selectedProduct}
+              onChange={(e) => setSelectedProduct(e.target.value)}
+              className="block w-full px-4 py-3 text-gray-900 dark:text-gray-100 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+            >
+              <option value="">-- 商品名を選択してください --</option>
+              {productNames.map((product) => (
+                <option key={product} value={product}>
+                  {product}
+                </option>
+              ))}
+            </select>
+            <p className="mt-2 text-sm text-gray-600 dark:text-gray-400">
+              {productNames.length}種類の商品が見つかりました
+            </p>
+          </div>
+
+          {/* ステータス選択 */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">
+              ステータスを選択
+            </label>
+            <div className="space-y-2">
+              <label className="flex items-center">
+                <input
+                  type="radio"
+                  value="all"
+                  checked={selectedStatus === "all"}
+                  onChange={(e) => setSelectedStatus(e.target.value)}
+                  className="w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 focus:ring-blue-500 dark:focus:ring-blue-600 dark:ring-offset-gray-800 focus:ring-2 dark:bg-gray-700 dark:border-gray-600"
+                />
+                <span className="ml-2 text-sm text-gray-900 dark:text-gray-100">
+                  すべて
+                </span>
+              </label>
+              {statuses.map((statusOption) => (
+                <label key={statusOption} className="flex items-center">
+                  <input
+                    type="radio"
+                    value={statusOption}
+                    checked={selectedStatus === statusOption}
+                    onChange={(e) => setSelectedStatus(e.target.value)}
+                    className="w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 focus:ring-blue-500 dark:focus:ring-blue-600 dark:ring-offset-gray-800 focus:ring-2 dark:bg-gray-700 dark:border-gray-600"
+                  />
+                  <span className="ml-2 text-sm text-gray-900 dark:text-gray-100">
+                    {statusOption}
+                  </span>
+                </label>
+              ))}
+            </div>
+          </div>
+        </>
       )}
 
       {/* Step 4: ダウンロードボタン */}
@@ -252,11 +303,12 @@ export default function CsvUploader() {
           onClick={() => {
             setStatus("ready");
             setSelectedProduct("");
+            setSelectedStatus("all");
             setMessage("");
           }}
           className="w-full bg-gray-600 hover:bg-gray-700 text-white font-semibold py-2 px-4 rounded-lg transition-colors duration-200"
         >
-          別の商品を選択
+          別の条件で抽出
         </button>
       )}
     </div>

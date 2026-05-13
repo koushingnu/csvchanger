@@ -44,15 +44,36 @@ export function extractProductNames(data: CsvRow[]): string[] {
   return Array.from(productNames).sort();
 }
 
-// 商品名でフィルタリングしてカラムを抽出
+// ステータスの一覧を取得
+export function extractStatuses(data: CsvRow[]): string[] {
+  const statuses = new Set<string>();
+  
+  data.forEach((row) => {
+    if (row["ステータス"] && row["ステータス"].trim() !== "") {
+      statuses.add(row["ステータス"].trim());
+    }
+  });
+  
+  return Array.from(statuses).sort();
+}
+
+// 商品名とステータスでフィルタリングしてカラムを抽出
 export function processCSVWithProductFilter(
   data: CsvRow[],
-  selectedProduct: string
+  selectedProduct: string,
+  selectedStatus?: string
 ): CsvRow[] {
   // 商品名でフィルタリング
-  const filteredData = data.filter(
+  let filteredData = data.filter(
     (row) => row["商品名"] === selectedProduct
   );
+
+  // ステータスでフィルタリング（指定がある場合）
+  if (selectedStatus && selectedStatus !== "all") {
+    filteredData = filteredData.filter(
+      (row) => row["ステータス"] === selectedStatus
+    );
+  }
 
   // 必要なカラムのみ抽出
   return filteredData.map((row) => {

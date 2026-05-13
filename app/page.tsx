@@ -9,7 +9,7 @@ export default function Home() {
         </h1>
         <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl p-8">
           <p className="text-gray-600 dark:text-gray-300 mb-6">
-            契約データCSVをアップロードして、商品名で絞り込み・必要なカラムのみ抽出します。
+            契約データCSVをアップロードして、商品名・ステータスで絞り込み・必要なカラムのみ抽出します。
             <br />
             <span className="text-sm text-gray-500 dark:text-gray-400">
               UTF-8・Shift_JIS など日本語エンコーディングに自動対応
