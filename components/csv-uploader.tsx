@@ -99,7 +99,7 @@ export default function CsvUploader() {
             );
           }
         },
-        error: (error) => {
+        error: (error: Error) => {
           setStatus("error");
           setMessage(`CSVの読み込みに失敗しました: ${error.message}`);
         },
