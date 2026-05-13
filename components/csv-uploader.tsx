@@ -2,14 +2,24 @@
 
 import { useState, useCallback } from "react";
 import Papa from "papaparse";
-import { processCSV, downloadCSV } from "@/utils/csv";
+import {
+  downloadCSV,
+  convertToUTF8,
+  extractProductNames,
+  processCSVWithProductFilter,
+} from "@/utils/csv";
 
-type StatusType = "idle" | "processing" | "success" | "error";
+type StatusType = "idle" | "processing" | "ready" | "success" | "error";
+
+type CsvRow = Record<string, string>;
 
 export default function CsvUploader() {
   const [status, setStatus] = useState<StatusType>("idle");
   const [message, setMessage] = useState<string>("");
   const [fileName, setFileName] = useState<string>("");
+  const [csvData, setCsvData] = useState<CsvRow[]>([]);
+  const [productNames, setProductNames] = useState<string[]>([]);
+  const [selectedProduct, setSelectedProduct] = useState<string>("");
 
   const handleFileUpload = useCallback(
     (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -28,11 +38,15 @@ export default function CsvUploader() {
       setFileName(file.name);
       setStatus("idle");
       setMessage("");
+      setCsvData([]);
+      setProductNames([]);
+      setSelectedProduct("");
     },
     []
   );
 
-  const handleProcess = useCallback(() => {
+  // Step 1: CSVを読み込んで商品名一覧を取得
+  const handleLoadCSV = useCallback(async () => {
     const fileInput = document.getElementById(
       "csv-file"
     ) as HTMLInputElement;
@@ -45,48 +59,107 @@ export default function CsvUploader() {
     }
 
     setStatus("processing");
-    setMessage("処理中...");
+    setMessage("CSVを読み込み中...");
 
-    Papa.parse<Record<string, string>>(file, {
-      header: true,
-      skipEmptyLines: true,
-      complete: (results) => {
-        try {
-          const processedData = processCSV(results.data);
+    try {
+      const utf8Text = await convertToUTF8(file);
 
-          if (processedData.length === 0) {
+      Papa.parse<CsvRow>(utf8Text, {
+        header: true,
+        skipEmptyLines: true,
+        complete: (results) => {
+          try {
+            if (results.data.length === 0) {
+              setStatus("error");
+              setMessage("CSVファイルが空です");
+              return;
+            }
+
+            // 商品名一覧を取得
+            const products = extractProductNames(results.data);
+
+            if (products.length === 0) {
+              setStatus("error");
+              setMessage("商品名カラムが見つかりませんでした");
+              return;
+            }
+
+            setCsvData(results.data);
+            setProductNames(products);
+            setStatus("ready");
+            setMessage(
+              `${results.data.length}件のデータを読み込みました。商品名を選択してください。`
+            );
+          } catch (error) {
             setStatus("error");
             setMessage(
-              "有効なデータが見つかりませんでした。name, email, phone のいずれかのカラムが必要です。"
+              `エラーが発生しました: ${
+                error instanceof Error ? error.message : "不明なエラー"
+              }`
             );
-            return;
           }
-
-          const csv = Papa.unparse(processedData);
-          downloadCSV(csv, "processed.csv");
-
-          setStatus("success");
-          setMessage(
-            `処理完了！${processedData.length}件のデータを出力しました。`
-          );
-        } catch (error) {
+        },
+        error: (error) => {
           setStatus("error");
-          setMessage(
-            `エラーが発生しました: ${
-              error instanceof Error ? error.message : "不明なエラー"
-            }`
-          );
-        }
-      },
-      error: (error) => {
-        setStatus("error");
-        setMessage(`CSVの読み込みに失敗しました: ${error.message}`);
-      },
-    });
+          setMessage(`CSVの読み込みに失敗しました: ${error.message}`);
+        },
+      });
+    } catch (error) {
+      setStatus("error");
+      setMessage(
+        `ファイルの変換に失敗しました: ${
+          error instanceof Error ? error.message : "不明なエラー"
+        }`
+      );
+    }
   }, []);
+
+  // Step 2: 選択された商品名でフィルタリングしてダウンロード
+  const handleDownload = useCallback(() => {
+    if (!selectedProduct) {
+      setStatus("error");
+      setMessage("商品名を選択してください");
+      return;
+    }
+
+    try {
+      setStatus("processing");
+      setMessage("データを処理中...");
+
+      const processedData = processCSVWithProductFilter(
+        csvData,
+        selectedProduct
+      );
+
+      if (processedData.length === 0) {
+        setStatus("error");
+        setMessage(
+          `「${selectedProduct}」のデータが見つかりませんでした`
+        );
+        return;
+      }
+
+      const csv = Papa.unparse(processedData);
+      const filename = `${selectedProduct}_${new Date().toISOString().split("T")[0]}.csv`;
+      downloadCSV(csv, filename);
+
+      setStatus("success");
+      setMessage(
+        `処理完了！${processedData.length}件のデータを出力しました。`
+      );
+    } catch (error) {
+      setStatus("error");
+      setMessage(
+        `エラーが発生しました: ${
+          error instanceof Error ? error.message : "不明なエラー"
+        }`
+      );
+    }
+  }, [csvData, selectedProduct]);
 
   return (
     <div className="space-y-6">
+      {/* Step 1: ファイル選択 */}
       <div>
         <label
           htmlFor="csv-file"
@@ -108,14 +181,57 @@ export default function CsvUploader() {
         )}
       </div>
 
-      <button
-        onClick={handleProcess}
-        disabled={status === "processing" || !fileName}
-        className="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed text-white font-semibold py-3 px-6 rounded-lg transition-colors duration-200 shadow-md hover:shadow-lg"
-      >
-        {status === "processing" ? "処理中..." : "実行"}
-      </button>
+      {/* Step 2: CSV読み込みボタン */}
+      {status !== "ready" && status !== "success" && (
+        <button
+          onClick={handleLoadCSV}
+          disabled={status === "processing" || !fileName}
+          className="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed text-white font-semibold py-3 px-6 rounded-lg transition-colors duration-200 shadow-md hover:shadow-lg"
+        >
+          {status === "processing" ? "読み込み中..." : "CSVを読み込む"}
+        </button>
+      )}
 
+      {/* Step 3: 商品名選択 */}
+      {status === "ready" && productNames.length > 0 && (
+        <div>
+          <label
+            htmlFor="product-select"
+            className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2"
+          >
+            商品名を選択
+          </label>
+          <select
+            id="product-select"
+            value={selectedProduct}
+            onChange={(e) => setSelectedProduct(e.target.value)}
+            className="block w-full px-4 py-3 text-gray-900 dark:text-gray-100 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+          >
+            <option value="">-- 商品名を選択してください --</option>
+            {productNames.map((product) => (
+              <option key={product} value={product}>
+                {product}
+              </option>
+            ))}
+          </select>
+          <p className="mt-2 text-sm text-gray-600 dark:text-gray-400">
+            {productNames.length}種類の商品が見つかりました
+          </p>
+        </div>
+      )}
+
+      {/* Step 4: ダウンロードボタン */}
+      {status === "ready" && (
+        <button
+          onClick={handleDownload}
+          disabled={!selectedProduct}
+          className="w-full bg-green-600 hover:bg-green-700 disabled:bg-gray-400 disabled:cursor-not-allowed text-white font-semibold py-3 px-6 rounded-lg transition-colors duration-200 shadow-md hover:shadow-lg"
+        >
+          選択した商品のデータをダウンロード
+        </button>
+      )}
+
+      {/* メッセージ表示 */}
       {message && (
         <div
           className={`p-4 rounded-lg ${
@@ -128,6 +244,20 @@ export default function CsvUploader() {
         >
           <p className="text-sm font-medium">{message}</p>
         </div>
+      )}
+
+      {/* 成功後にリセットボタン */}
+      {status === "success" && (
+        <button
+          onClick={() => {
+            setStatus("ready");
+            setSelectedProduct("");
+            setMessage("");
+          }}
+          className="w-full bg-gray-600 hover:bg-gray-700 text-white font-semibold py-2 px-4 rounded-lg transition-colors duration-200"
+        >
+          別の商品を選択
+        </button>
       )}
     </div>
   );
