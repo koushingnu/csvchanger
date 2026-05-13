@@ -1,0 +1,7 @@
+name,email,phone,address,age,gender
+山田太郎,taro@example.com,090-1234-5678,東京都,30,男性
+佐藤花子,hanako@example.com,080-9876-5432,大阪府,25,女性
+
+田中一郎,ichiro@example.com,070-1111-2222,神奈川県,35,男性
+鈴木美咲,misaki@example.com,090-3333-4444,福岡県,28,女性
+高橋健太,kenta@example.com,080-5555-6666,北海道,42,男性
