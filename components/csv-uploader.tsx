@@ -10,7 +10,7 @@ import {
   processCSVWithProductFilter,
 } from "@/utils/csv";
 
-type StatusType = "idle" | "processing" | "ready" | "success" | "error";
+type StatusType = "idle" | "processing" | "ready" | "preview" | "success" | "error";
 
 type CsvRow = Record<string, string>;
 
@@ -23,6 +23,7 @@ export default function CsvUploader() {
   const [selectedProduct, setSelectedProduct] = useState<string>("");
   const [statuses, setStatuses] = useState<string[]>([]);
   const [selectedStatus, setSelectedStatus] = useState<string>("all");
+  const [previewData, setPreviewData] = useState<CsvRow[]>([]);
 
   const handleFileUpload = useCallback(
     (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -46,15 +47,14 @@ export default function CsvUploader() {
       setSelectedProduct("");
       setStatuses([]);
       setSelectedStatus("all");
+      setPreviewData([]);
     },
-    []
+    [],
   );
 
   // Step 1: CSVを読み込んで商品名一覧を取得
   const handleLoadCSV = useCallback(async () => {
-    const fileInput = document.getElementById(
-      "csv-file"
-    ) as HTMLInputElement;
+    const fileInput = document.getElementById("csv-file") as HTMLInputElement;
     const file = fileInput?.files?.[0];
 
     if (!file) {
@@ -97,14 +97,14 @@ export default function CsvUploader() {
             setStatuses(statusList);
             setStatus("ready");
             setMessage(
-              `${results.data.length}件のデータを読み込みました。商品名とステータスを選択してください。`
+              `${results.data.length}件のデータを読み込みました。商品名とステータスを選択してください。`,
             );
           } catch (error) {
             setStatus("error");
             setMessage(
               `エラーが発生しました: ${
                 error instanceof Error ? error.message : "不明なエラー"
-              }`
+              }`,
             );
           }
         },
@@ -118,13 +118,13 @@ export default function CsvUploader() {
       setMessage(
         `ファイルの変換に失敗しました: ${
           error instanceof Error ? error.message : "不明なエラー"
-        }`
+        }`,
       );
     }
   }, []);
 
-  // Step 2: 選択された商品名とステータスでフィルタリングしてダウンロード
-  const handleDownload = useCallback(() => {
+  // Step 2: プレビュー表示
+  const handlePreview = useCallback(() => {
     if (!selectedProduct) {
       setStatus("error");
       setMessage("商品名を選択してください");
@@ -132,9 +132,6 @@ export default function CsvUploader() {
     }
 
     try {
-      setStatus("processing");
-      setMessage("データを処理中...");
-
       const processedData = processCSVWithProductFilter(
         csvData,
         selectedProduct,
@@ -151,15 +148,10 @@ export default function CsvUploader() {
         return;
       }
 
-      const csv = Papa.unparse(processedData);
-      const statusSuffix =
-        selectedStatus === "all" ? "" : `_${selectedStatus}`;
-      const filename = `${selectedProduct}${statusSuffix}_${new Date().toISOString().split("T")[0]}.csv`;
-      downloadCSV(csv, filename);
-
-      setStatus("success");
+      setPreviewData(processedData);
+      setStatus("preview");
       setMessage(
-        `処理完了！${processedData.length}件のデータを出力しました。`
+        `${processedData.length}件のデータが抽出されました。プレビューを確認してダウンロードしてください。`
       );
     } catch (error) {
       setStatus("error");
@@ -170,6 +162,35 @@ export default function CsvUploader() {
       );
     }
   }, [csvData, selectedProduct, selectedStatus]);
+
+  // Step 3: ダウンロード
+  const handleDownload = useCallback(() => {
+    if (previewData.length === 0) {
+      setStatus("error");
+      setMessage("プレビューデータがありません");
+      return;
+    }
+
+    try {
+      setStatus("processing");
+      setMessage("ダウンロード中...");
+
+      const csv = Papa.unparse(previewData);
+      const statusSuffix = selectedStatus === "all" ? "" : `_${selectedStatus}`;
+      const filename = `${selectedProduct}${statusSuffix}_${new Date().toISOString().split("T")[0]}.csv`;
+      downloadCSV(csv, filename);
+
+      setStatus("success");
+      setMessage(`処理完了！${previewData.length}件のデータを出力しました。`);
+    } catch (error) {
+      setStatus("error");
+      setMessage(
+        `エラーが発生しました: ${
+          error instanceof Error ? error.message : "不明なエラー"
+        }`,
+      );
+    }
+  }, [previewData, selectedProduct, selectedStatus]);
 
   return (
     <div className="space-y-6">
@@ -271,14 +292,66 @@ export default function CsvUploader() {
         </>
       )}
 
-      {/* Step 4: ダウンロードボタン */}
+      {/* Step 4: プレビューボタン */}
       {status === "ready" && (
         <button
-          onClick={handleDownload}
+          onClick={handlePreview}
           disabled={!selectedProduct}
-          className="w-full bg-green-600 hover:bg-green-700 disabled:bg-gray-400 disabled:cursor-not-allowed text-white font-semibold py-3 px-6 rounded-lg transition-colors duration-200 shadow-md hover:shadow-lg"
+          className="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed text-white font-semibold py-3 px-6 rounded-lg transition-colors duration-200 shadow-md hover:shadow-lg"
         >
-          選択した商品のデータをダウンロード
+          データをプレビュー
+        </button>
+      )}
+
+      {/* Step 5: プレビュー表示 */}
+      {status === "preview" && previewData.length > 0 && (
+        <div className="border border-gray-300 dark:border-gray-600 rounded-lg overflow-hidden">
+          <div className="bg-gray-100 dark:bg-gray-800 px-4 py-3 border-b border-gray-300 dark:border-gray-600">
+            <p className="text-sm font-medium text-gray-700 dark:text-gray-300">
+              プレビュー（全{previewData.length}件中、最初の100件を表示）
+            </p>
+          </div>
+          <div className="overflow-x-auto max-h-[600px] overflow-y-auto">
+            <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700 text-sm">
+              <thead className="bg-gray-50 dark:bg-gray-800 sticky top-0 z-10">
+                <tr>
+                  {previewData[0] &&
+                    Object.keys(previewData[0]).map((key) => (
+                      <th
+                        key={key}
+                        className="px-3 py-2 text-left text-xs font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wider whitespace-nowrap border-r border-gray-200 dark:border-gray-700"
+                      >
+                        {key}
+                      </th>
+                    ))}
+                </tr>
+              </thead>
+              <tbody className="bg-white dark:bg-gray-900 divide-y divide-gray-200 dark:divide-gray-700">
+                {previewData.slice(0, 100).map((row, index) => (
+                  <tr key={index} className="hover:bg-gray-50 dark:hover:bg-gray-800">
+                    {Object.values(row).map((value, cellIndex) => (
+                      <td
+                        key={cellIndex}
+                        className="px-3 py-2 text-xs text-gray-900 dark:text-gray-100 whitespace-nowrap border-r border-gray-100 dark:border-gray-800"
+                      >
+                        {value}
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* Step 6: ダウンロードボタン */}
+      {status === "preview" && (
+        <button
+          onClick={handleDownload}
+          className="w-full bg-green-600 hover:bg-green-700 text-white font-semibold py-3 px-6 rounded-lg transition-colors duration-200 shadow-md hover:shadow-lg"
+        >
+          このデータをダウンロード
         </button>
       )}
 
@@ -304,11 +377,26 @@ export default function CsvUploader() {
             setStatus("ready");
             setSelectedProduct("");
             setSelectedStatus("all");
+            setPreviewData([]);
             setMessage("");
           }}
           className="w-full bg-gray-600 hover:bg-gray-700 text-white font-semibold py-2 px-4 rounded-lg transition-colors duration-200"
         >
           別の条件で抽出
+        </button>
+      )}
+
+      {/* プレビュー中に戻るボタン */}
+      {status === "preview" && (
+        <button
+          onClick={() => {
+            setStatus("ready");
+            setPreviewData([]);
+            setMessage("");
+          }}
+          className="w-full bg-gray-600 hover:bg-gray-700 text-white font-semibold py-2 px-4 rounded-lg transition-colors duration-200"
+        >
+          条件を変更
         </button>
       )}
     </div>
