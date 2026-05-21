@@ -1,13 +1,22 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import Papa from "papaparse";
 import {
   downloadCSV,
   convertToUTF8,
   extractProductNames,
   extractStatuses,
+  extractAllColumns,
   processCSVWithProductFilter,
+  getPreviousMonth,
+  loadColumnFormats,
+  saveColumnFormats,
+  applyPresetFormats,
+  getFormatForProduct,
+  DEFAULT_FORMAT,
+  PRESET_FORMATS,
+  type ColumnFormat,
 } from "@/utils/csv";
 
 type StatusType = "idle" | "processing" | "ready" | "preview" | "success" | "error";
@@ -24,6 +33,25 @@ export default function CsvUploader() {
   const [statuses, setStatuses] = useState<string[]>([]);
   const [selectedStatus, setSelectedStatus] = useState<string>("all");
   const [previewData, setPreviewData] = useState<CsvRow[]>([]);
+  const [cancelYearMonth, setCancelYearMonth] = useState<string>("");
+  const [columnFormats, setColumnFormats] = useState<Record<string, ColumnFormat>>({});
+  const [showFormatSettings, setShowFormatSettings] = useState<boolean>(false);
+  const [availableColumns, setAvailableColumns] = useState<string[]>([]);
+  const [selectedColumns, setSelectedColumns] = useState<string[]>(DEFAULT_FORMAT.columns);
+
+  // 初期化（クライアントサイドのみ）
+  useEffect(() => {
+    setCancelYearMonth(getPreviousMonth());
+    setColumnFormats(loadColumnFormats());
+  }, []);
+
+  // 商品が選択されたときにフォーマットを読み込み（プリセット優先）
+  useEffect(() => {
+    if (selectedProduct) {
+      const format = getFormatForProduct(selectedProduct, columnFormats);
+      setSelectedColumns(format.columns);
+    }
+  }, [selectedProduct, columnFormats]);
 
   const handleFileUpload = useCallback(
     (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -48,6 +76,10 @@ export default function CsvUploader() {
       setStatuses([]);
       setSelectedStatus("all");
       setPreviewData([]);
+      // クライアントサイドでのみ実行されるため安全
+      if (typeof window !== "undefined") {
+        setCancelYearMonth(getPreviousMonth());
+      }
     },
     [],
   );
@@ -92,9 +124,18 @@ export default function CsvUploader() {
             // ステータス一覧を取得
             const statusList = extractStatuses(results.data);
 
+            // すべてのカラムを取得
+            const allColumns = extractAllColumns(results.data);
+
+            // プリセットフォーマットを自動適用
+            const updatedFormats = applyPresetFormats(products, columnFormats);
+            setColumnFormats(updatedFormats);
+            saveColumnFormats(updatedFormats);
+
             setCsvData(results.data);
             setProductNames(products);
             setStatuses(statusList);
+            setAvailableColumns(allColumns);
             setStatus("ready");
             setMessage(
               `${results.data.length}件のデータを読み込みました。商品名とステータスを選択してください。`,
@@ -131,19 +172,35 @@ export default function CsvUploader() {
       return;
     }
 
+    if (selectedColumns.length === 0) {
+      setStatus("error");
+      setMessage("少なくとも1つのカラムを選択してください");
+      return;
+    }
+
     try {
+      // 現在選択されているカラムでフォーマットを作成
+      const format: ColumnFormat = {
+        name: selectedProduct,
+        columns: selectedColumns,
+      };
+
       const processedData = processCSVWithProductFilter(
         csvData,
         selectedProduct,
-        selectedStatus
+        selectedStatus,
+        cancelYearMonth,
+        format
       );
 
       if (processedData.length === 0) {
         const statusText =
           selectedStatus === "all" ? "" : `（${selectedStatus}）`;
-        setStatus("error");
+        const cancelText =
+          cancelYearMonth === "all" ? "" : `（${cancelYearMonth}解約）`;
+        // 状態は "ready" のまま保持し、エラーメッセージのみ表示
         setMessage(
-          `「${selectedProduct}」${statusText}のデータが見つかりませんでした`
+          `⚠️ 「${selectedProduct}」${statusText}${cancelText}のデータが見つかりませんでした。条件を変更して再度お試しください。`
         );
         return;
       }
@@ -161,7 +218,59 @@ export default function CsvUploader() {
         }`
       );
     }
-  }, [csvData, selectedProduct, selectedStatus]);
+  }, [csvData, selectedProduct, selectedStatus, cancelYearMonth, selectedColumns]);
+
+  // フォーマットを保存
+  const handleSaveFormat = useCallback(() => {
+    if (!selectedProduct) {
+      alert("商品名を選択してください");
+      return;
+    }
+
+    if (selectedColumns.length === 0) {
+      alert("少なくとも1つのカラムを選択してください");
+      return;
+    }
+
+    const newFormat: ColumnFormat = {
+      name: selectedProduct,
+      columns: selectedColumns,
+    };
+
+    const updatedFormats = {
+      ...columnFormats,
+      [selectedProduct]: newFormat,
+    };
+
+    setColumnFormats(updatedFormats);
+    saveColumnFormats(updatedFormats);
+    alert(`「${selectedProduct}」のフォーマットを保存しました`);
+  }, [selectedProduct, selectedColumns, columnFormats]);
+
+  // フォーマットをリセット
+  const handleResetFormat = useCallback(() => {
+    if (!selectedProduct) return;
+
+    const updatedFormats = { ...columnFormats };
+    delete updatedFormats[selectedProduct];
+
+    setColumnFormats(updatedFormats);
+    saveColumnFormats(updatedFormats);
+    setSelectedColumns(DEFAULT_FORMAT.columns);
+    alert(`「${selectedProduct}」のフォーマットをデフォルトに戻しました`);
+  }, [selectedProduct, columnFormats]);
+
+  // カラムの選択/選択解除を切り替え
+  const toggleColumn = useCallback(
+    (column: string) => {
+      if (selectedColumns.includes(column)) {
+        setSelectedColumns(selectedColumns.filter((c) => c !== column));
+      } else {
+        setSelectedColumns([...selectedColumns, column]);
+      }
+    },
+    [selectedColumns]
+  );
 
   // Step 3: ダウンロード
   const handleDownload = useCallback(() => {
@@ -177,7 +286,8 @@ export default function CsvUploader() {
 
       const csv = Papa.unparse(previewData);
       const statusSuffix = selectedStatus === "all" ? "" : `_${selectedStatus}`;
-      const filename = `${selectedProduct}${statusSuffix}_${new Date().toISOString().split("T")[0]}.csv`;
+      const cancelSuffix = cancelYearMonth === "all" ? "" : `_${cancelYearMonth}`;
+      const filename = `${selectedProduct}${statusSuffix}${cancelSuffix}_${new Date().toISOString().split("T")[0]}.csv`;
       downloadCSV(csv, filename);
 
       setStatus("success");
@@ -190,7 +300,7 @@ export default function CsvUploader() {
         }`,
       );
     }
-  }, [previewData, selectedProduct, selectedStatus]);
+  }, [previewData, selectedProduct, selectedStatus, cancelYearMonth]);
 
   return (
     <div className="space-y-6">
@@ -289,6 +399,156 @@ export default function CsvUploader() {
               ))}
             </div>
           </div>
+
+          {/* 退会年月選択 */}
+          <div>
+            <label
+              htmlFor="cancel-year-month"
+              className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2"
+            >
+              退会年月を選択
+            </label>
+            <div className="space-y-2">
+              <label className="flex items-center">
+                <input
+                  type="radio"
+                  value="all"
+                  checked={cancelYearMonth === "all"}
+                  onChange={(e) => setCancelYearMonth(e.target.value)}
+                  className="w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 focus:ring-blue-500 dark:focus:ring-blue-600 dark:ring-offset-gray-800 focus:ring-2 dark:bg-gray-700 dark:border-gray-600"
+                />
+                <span className="ml-2 text-sm text-gray-900 dark:text-gray-100">
+                  すべて
+                </span>
+              </label>
+              <div className="flex items-center">
+                <input
+                  type="radio"
+                  value="specific"
+                  checked={cancelYearMonth !== "all" && cancelYearMonth !== ""}
+                  onChange={() => setCancelYearMonth(getPreviousMonth())}
+                  className="w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 focus:ring-blue-500 dark:focus:ring-blue-600 dark:ring-offset-gray-800 focus:ring-2 dark:bg-gray-700 dark:border-gray-600"
+                />
+                <input
+                  type="month"
+                  value={cancelYearMonth === "all" || cancelYearMonth === "" ? getPreviousMonth() : cancelYearMonth}
+                  onChange={(e) => setCancelYearMonth(e.target.value)}
+                  disabled={cancelYearMonth === "all"}
+                  className="ml-2 px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 disabled:bg-gray-100 dark:disabled:bg-gray-800"
+                />
+              </div>
+            </div>
+            {cancelYearMonth && (
+              <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">
+                デフォルト：前月（{getPreviousMonth()}）
+              </p>
+            )}
+          </div>
+
+          {/* フォーマット設定ボタン */}
+          <div>
+            <button
+              onClick={() => setShowFormatSettings(!showFormatSettings)}
+              className="text-sm text-blue-600 dark:text-blue-400 hover:underline"
+            >
+              {showFormatSettings ? "▼ " : "▶ "}
+              抽出カラムのフォーマット設定
+            </button>
+          </div>
+
+          {/* フォーマット設定UI */}
+          {showFormatSettings && (() => {
+            const isPresetProduct = !!(selectedProduct && PRESET_FORMATS[selectedProduct]);
+            const hasCustomFormat = !!(selectedProduct && columnFormats[selectedProduct]);
+            
+            return (
+              <div className="bg-gray-50 dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg p-4 space-y-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-medium text-gray-700 dark:text-gray-300">
+                      「{selectedProduct || "商品"}」のカラム設定
+                    </p>
+                    {isPresetProduct && (
+                      <p className="text-xs text-green-600 dark:text-green-400 mt-1">
+                        ✓ プリセット設定あり（変更不可）
+                      </p>
+                    )}
+                    {!isPresetProduct && hasCustomFormat && (
+                      <p className="text-xs text-blue-600 dark:text-blue-400 mt-1">
+                        カスタム設定
+                      </p>
+                    )}
+                  </div>
+                  {!isPresetProduct && (
+                    <div className="space-x-2">
+                      <button
+                        onClick={handleSaveFormat}
+                        disabled={!selectedProduct}
+                        className="px-3 py-1 text-xs bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 text-white rounded disabled:cursor-not-allowed"
+                      >
+                        保存
+                      </button>
+                      <button
+                        onClick={handleResetFormat}
+                        disabled={!selectedProduct}
+                        className="px-3 py-1 text-xs bg-gray-600 hover:bg-gray-700 disabled:bg-gray-400 text-white rounded disabled:cursor-not-allowed"
+                      >
+                        リセット
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                <div className="text-xs text-gray-600 dark:text-gray-400">
+                  選択中: {selectedColumns.length}個のカラム
+                </div>
+
+                <div className="max-h-64 overflow-y-auto space-y-1 border border-gray-200 dark:border-gray-700 rounded p-3 bg-white dark:bg-gray-900">
+                  {availableColumns.map((column) => {
+                    const isSelected = selectedColumns.includes(column);
+                    const isDisabled = isPresetProduct;
+                    
+                    return (
+                      <label
+                        key={column}
+                        className={`flex items-center space-x-2 p-1 rounded ${
+                          isDisabled
+                            ? "opacity-60 cursor-not-allowed"
+                            : "hover:bg-gray-100 dark:hover:bg-gray-800 cursor-pointer"
+                        }`}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={isSelected}
+                          onChange={() => !isDisabled && toggleColumn(column)}
+                          disabled={isDisabled}
+                          className="w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 rounded focus:ring-blue-500 disabled:cursor-not-allowed"
+                        />
+                        <span className="text-xs text-gray-900 dark:text-gray-100">
+                          {column}
+                        </span>
+                      </label>
+                    );
+                  })}
+                </div>
+
+                <div className="text-xs text-gray-500 dark:text-gray-400 space-y-1">
+                  {isPresetProduct ? (
+                    <p>
+                      🔒 この商品はプリセット設定のため、カラムの変更はできません
+                    </p>
+                  ) : (
+                    <>
+                      <p>💡 選択したカラムのみがCSVに出力されます</p>
+                      <p>
+                        💡 設定は商品ごとに保存され、次回から自動的に適用されます
+                      </p>
+                    </>
+                  )}
+                </div>
+              </div>
+            );
+          })()}
         </>
       )}
 
