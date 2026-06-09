@@ -31,18 +31,66 @@ export default function CsvUploader() {
   const [productNames, setProductNames] = useState<string[]>([]);
   const [selectedProduct, setSelectedProduct] = useState<string>("");
   const [statuses, setStatuses] = useState<string[]>([]);
-  const [selectedStatus, setSelectedStatus] = useState<string>("all");
+  const [selectedStatus, setSelectedStatus] = useState<string>("解約");
   const [previewData, setPreviewData] = useState<CsvRow[]>([]);
   const [cancelYearMonth, setCancelYearMonth] = useState<string>("");
   const [columnFormats, setColumnFormats] = useState<Record<string, ColumnFormat>>({});
   const [showFormatSettings, setShowFormatSettings] = useState<boolean>(false);
   const [availableColumns, setAvailableColumns] = useState<string[]>([]);
   const [selectedColumns, setSelectedColumns] = useState<string[]>(DEFAULT_FORMAT.columns);
+  const [isDragging, setIsDragging] = useState<boolean>(false);
 
   // 初期化（クライアントサイドのみ）
   useEffect(() => {
     setCancelYearMonth(getPreviousMonth());
     setColumnFormats(loadColumnFormats());
+  }, []);
+
+  // ドラッグ&ドロップのハンドラー
+  const handleDragOver = useCallback((e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    setIsDragging(true);
+  }, []);
+
+  const handleDragLeave = useCallback((e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    setIsDragging(false);
+  }, []);
+
+  const handleDrop = useCallback((e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    setIsDragging(false);
+
+    const files = e.dataTransfer.files;
+    if (files.length === 0) return;
+
+    const file = files[0];
+    if (!file.name.endsWith(".csv")) {
+      setStatus("error");
+      setMessage("CSVファイルのみアップロード可能です");
+      return;
+    }
+
+    setFileName(file.name);
+    setStatus("idle");
+    setMessage("");
+    setCsvData([]);
+    setProductNames([]);
+    setSelectedProduct("");
+    setStatuses([]);
+    setSelectedStatus("解約");
+    setPreviewData([]);
+    if (typeof window !== "undefined") {
+      setCancelYearMonth(getPreviousMonth());
+    }
+
+    // ファイル入力要素に設定
+    const fileInput = document.getElementById("csv-file") as HTMLInputElement;
+    if (fileInput) {
+      const dataTransfer = new DataTransfer();
+      dataTransfer.items.add(file);
+      fileInput.files = dataTransfer.files;
+    }
   }, []);
 
   // 商品が選択されたときにフォーマットを読み込み（プリセット優先）
@@ -136,10 +184,33 @@ export default function CsvUploader() {
             setProductNames(products);
             setStatuses(statusList);
             setAvailableColumns(allColumns);
-            setStatus("ready");
-            setMessage(
-              `${results.data.length}件のデータを読み込みました。商品名とステータスを選択してください。`,
+
+            // LEAN BODY（リーンボディ）が存在するかチェック
+            const leanBodyProduct = products.find(
+              (p) => p === "LEAN BODY（リーンボディ）"
             );
+
+            if (leanBodyProduct) {
+              // LEAN BODYが存在する場合、自動選択
+              setSelectedProduct(leanBodyProduct);
+              setStatus("ready");
+              setMessage(
+                `${results.data.length}件のデータを読み込みました。LEAN BODY（リーンボディ）を自動選択しました。`,
+              );
+            } else {
+              // LEAN BODYが存在しない場合、エラーポップアップ
+              alert(
+                "⚠️ LEAN BODY（リーンボディ）が見つかりませんでした。\n\nLEAN BODYのあるCSVファイルを選択してください。"
+              );
+              setStatus("error");
+              setMessage(
+                "LEAN BODY（リーンボディ）のあるCSVファイルを選択してください。"
+              );
+              // 初期状態に戻す
+              setCsvData([]);
+              setProductNames([]);
+              setFileName("");
+            }
           } catch (error) {
             setStatus("error");
             setMessage(
@@ -198,9 +269,13 @@ export default function CsvUploader() {
           selectedStatus === "all" ? "" : `（${selectedStatus}）`;
         const cancelText =
           cancelYearMonth === "all" ? "" : `（${cancelYearMonth}解約）`;
-        // 状態は "ready" のまま保持し、エラーメッセージのみ表示
-        setMessage(
-          `⚠️ 「${selectedProduct}」${statusText}${cancelText}のデータが見つかりませんでした。条件を変更して再度お試しください。`
+        // ポップアップで通知
+        alert(
+          `⚠️ データが見つかりませんでした\n\n` +
+          `商品名: ${selectedProduct}\n` +
+          `${statusText ? `ステータス: ${selectedStatus}\n` : ""}` +
+          `${cancelText ? `退会年月: ${cancelYearMonth}\n` : ""}` +
+          `\n条件を変更して再度お試しください。`
         );
         return;
       }
@@ -304,21 +379,55 @@ export default function CsvUploader() {
 
   return (
     <div className="space-y-6">
-      {/* Step 1: ファイル選択 */}
+      {/* Step 1: ファイル選択（ドラッグ&ドロップ対応） */}
       <div>
-        <label
-          htmlFor="csv-file"
-          className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2"
-        >
+        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
           CSVファイルを選択
         </label>
-        <input
-          id="csv-file"
-          type="file"
-          accept=".csv"
-          onChange={handleFileUpload}
-          className="block w-full text-sm text-gray-900 dark:text-gray-100 border border-gray-300 dark:border-gray-600 rounded-lg cursor-pointer bg-gray-50 dark:bg-gray-700 focus:outline-none file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100 dark:file:bg-gray-600 dark:file:text-gray-200"
-        />
+        <div
+          onDragOver={handleDragOver}
+          onDragLeave={handleDragLeave}
+          onDrop={handleDrop}
+          className={`relative border-2 border-dashed rounded-lg p-6 transition-colors ${
+            isDragging
+              ? "border-blue-500 bg-blue-50 dark:bg-blue-900/20"
+              : "border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-gray-700"
+          }`}
+        >
+          <input
+            id="csv-file"
+            type="file"
+            accept=".csv"
+            onChange={handleFileUpload}
+            className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+          />
+          <div className="text-center">
+            <svg
+              className="mx-auto h-12 w-12 text-gray-400"
+              stroke="currentColor"
+              fill="none"
+              viewBox="0 0 48 48"
+              aria-hidden="true"
+            >
+              <path
+                d="M28 8H12a4 4 0 00-4 4v20m32-12v8m0 0v8a4 4 0 01-4 4H12a4 4 0 01-4-4v-4m32-4l-3.172-3.172a4 4 0 00-5.656 0L28 28M8 32l9.172-9.172a4 4 0 015.656 0L28 28m0 0l4 4m4-24h8m-4-4v8m-12 4h.02"
+                strokeWidth={2}
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+            <p className="mt-2 text-sm text-gray-600 dark:text-gray-400">
+              <span className="font-semibold text-blue-600 dark:text-blue-400">
+                クリックしてファイルを選択
+              </span>
+              {" "}または{" "}
+              <span className="font-semibold">ドラッグ&ドロップ</span>
+            </p>
+            <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+              CSV形式のファイルのみ
+            </p>
+          </div>
+        </div>
         {fileName && (
           <p className="mt-2 text-sm text-gray-600 dark:text-gray-400">
             選択済み: {fileName}
@@ -337,31 +446,12 @@ export default function CsvUploader() {
         </button>
       )}
 
-      {/* Step 3: 商品名選択 */}
-      {status === "ready" && productNames.length > 0 && (
+      {/* Step 3: 商品名表示（LEAN BODY固定） */}
+      {status === "ready" && selectedProduct && (
         <>
-          <div>
-            <label
-              htmlFor="product-select"
-              className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2"
-            >
-              商品名を選択
-            </label>
-            <select
-              id="product-select"
-              value={selectedProduct}
-              onChange={(e) => setSelectedProduct(e.target.value)}
-              className="block w-full px-4 py-3 text-gray-900 dark:text-gray-100 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-            >
-              <option value="">-- 商品名を選択してください --</option>
-              {productNames.map((product) => (
-                <option key={product} value={product}>
-                  {product}
-                </option>
-              ))}
-            </select>
-            <p className="mt-2 text-sm text-gray-600 dark:text-gray-400">
-              {productNames.length}種類の商品が見つかりました
+          <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-4">
+            <p className="text-sm font-medium text-blue-800 dark:text-blue-300">
+              選択中の商品: <span className="font-bold">{selectedProduct}</span>
             </p>
           </div>
 
@@ -458,6 +548,17 @@ export default function CsvUploader() {
 
           {/* フォーマット設定UI */}
           {showFormatSettings && (() => {
+            // 商品が選択されていない場合
+            if (!selectedProduct) {
+              return (
+                <div className="bg-gray-50 dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg p-4">
+                  <p className="text-sm text-gray-600 dark:text-gray-400 text-center">
+                    商品が選択されていません。
+                  </p>
+                </div>
+              );
+            }
+
             const isPresetProduct = !!(selectedProduct && PRESET_FORMATS[selectedProduct]);
             const hasCustomFormat = !!(selectedProduct && columnFormats[selectedProduct]);
             
@@ -466,7 +567,7 @@ export default function CsvUploader() {
                 <div className="flex items-center justify-between">
                   <div>
                     <p className="text-sm font-medium text-gray-700 dark:text-gray-300">
-                      「{selectedProduct || "商品"}」のカラム設定
+                      「{selectedProduct}」のカラム設定
                     </p>
                     {isPresetProduct && (
                       <p className="text-xs text-green-600 dark:text-green-400 mt-1">
@@ -483,15 +584,13 @@ export default function CsvUploader() {
                     <div className="space-x-2">
                       <button
                         onClick={handleSaveFormat}
-                        disabled={!selectedProduct}
-                        className="px-3 py-1 text-xs bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 text-white rounded disabled:cursor-not-allowed"
+                        className="px-3 py-1 text-xs bg-blue-600 hover:bg-blue-700 text-white rounded"
                       >
                         保存
                       </button>
                       <button
                         onClick={handleResetFormat}
-                        disabled={!selectedProduct}
-                        className="px-3 py-1 text-xs bg-gray-600 hover:bg-gray-700 disabled:bg-gray-400 text-white rounded disabled:cursor-not-allowed"
+                        className="px-3 py-1 text-xs bg-gray-600 hover:bg-gray-700 text-white rounded"
                       >
                         リセット
                       </button>
@@ -568,7 +667,11 @@ export default function CsvUploader() {
         <div className="border border-gray-300 dark:border-gray-600 rounded-lg overflow-hidden">
           <div className="bg-gray-100 dark:bg-gray-800 px-4 py-3 border-b border-gray-300 dark:border-gray-600">
             <p className="text-sm font-medium text-gray-700 dark:text-gray-300">
-              プレビュー（全{previewData.length}件中、最初の100件を表示）
+              プレビュー（
+              {previewData.length <= 100
+                ? `全${previewData.length}件を表示`
+                : `全${previewData.length}件中、最初の100件を表示`}
+              ）
             </p>
           </div>
           <div className="overflow-x-auto max-h-[600px] overflow-y-auto">
