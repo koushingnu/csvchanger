@@ -359,7 +359,25 @@ export default function CsvUploader() {
       setStatus("processing");
       setMessage("ダウンロード中...");
 
-      const csv = Papa.unparse(previewData);
+      // LEAN BODYの場合、カラム名を変更
+      let dataToDownload = previewData;
+      if (selectedProduct === "LEAN BODY（リーンボディ）") {
+        dataToDownload = previewData.map((row) => {
+          const newRow: Record<string, string> = {};
+          Object.keys(row).forEach((key) => {
+            if (key === "PASS") {
+              newRow["クーポンコード"] = row[key];
+            } else if (key === "認証キー") {
+              newRow["URL"] = row[key];
+            } else {
+              newRow[key] = row[key];
+            }
+          });
+          return newRow;
+        });
+      }
+
+      const csv = Papa.unparse(dataToDownload);
       const statusSuffix = selectedStatus === "all" ? "" : `_${selectedStatus}`;
       const cancelSuffix = cancelYearMonth === "all" ? "" : `_${cancelYearMonth}`;
       const filename = `${selectedProduct}${statusSuffix}${cancelSuffix}_${new Date().toISOString().split("T")[0]}.csv`;
@@ -737,15 +755,29 @@ export default function CsvUploader() {
       {status === "success" && (
         <button
           onClick={() => {
-            setStatus("ready");
-            setSelectedProduct("");
-            setSelectedStatus("all");
-            setPreviewData([]);
+            // 完全リセット
+            setStatus("idle");
+            setFileName("");
             setMessage("");
+            setCsvData([]);
+            setProductNames([]);
+            setSelectedProduct("");
+            setStatuses([]);
+            setSelectedStatus("解約");
+            setPreviewData([]);
+            setAvailableColumns([]);
+            if (typeof window !== "undefined") {
+              setCancelYearMonth(getPreviousMonth());
+            }
+            // ファイル入力もリセット
+            const fileInput = document.getElementById("csv-file") as HTMLInputElement;
+            if (fileInput) {
+              fileInput.value = "";
+            }
           }}
           className="w-full bg-gray-600 hover:bg-gray-700 text-white font-semibold py-2 px-4 rounded-lg transition-colors duration-200"
         >
-          別の条件で抽出
+          別のファイルをインポート
         </button>
       )}
 
